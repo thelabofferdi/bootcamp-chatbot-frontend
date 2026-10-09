@@ -12,10 +12,26 @@ interface ChatWindowProps {
   loading: boolean
   draft: string
   onDraftChange: (value: string) => void
-  onSend: () => void
+  onSubmit: () => void
+  asNote: boolean
+  onAsNoteChange: (value: boolean) => void
+  models: string[]
+  model: string
+  onModelChange: (value: string) => void
 }
 
-export default function ChatWindow({ messages, loading, draft, onDraftChange, onSend }: ChatWindowProps) {
+export default function ChatWindow({
+  messages,
+  loading,
+  draft,
+  onDraftChange,
+  onSubmit,
+  asNote,
+  onAsNoteChange,
+  models,
+  model,
+  onModelChange,
+}: ChatWindowProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
 
   // Keep the latest message in view.
@@ -25,7 +41,7 @@ export default function ChatWindow({ messages, loading, draft, onDraftChange, on
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault()
-    if (!loading && draft.trim()) onSend()
+    if (!loading && draft.trim()) onSubmit()
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -39,34 +55,70 @@ export default function ChatWindow({ messages, loading, draft, onDraftChange, on
         {messages.length === 0 && !loading && (
           <p className="muted center">Pose ta première question à Study Buddy.</p>
         )}
-        {messages.map((m, i) =>
-          m.role === 'system-notification' ? (
-            <div key={i} className="notification">
-              {m.content}
-            </div>
-          ) : (
+        {messages.map((m, i) => {
+          if (m.role === 'system-notification') {
+            return (
+              <div key={i} className="notification">
+                {m.content}
+              </div>
+            )
+          }
+          if (m.role === 'note') {
+            return (
+              <div key={i} className="bubble note">
+                <span className="note-label">Note personnelle</span>
+                {m.content}
+              </div>
+            )
+          }
+          // The streaming placeholder stays empty until the first chunk arrives; the typing dots cover that gap.
+          if (m.role === 'assistant' && m.content === '') return null
+          return (
             <div key={i} className={`bubble ${m.role}`}>
               {/* The LLM answers in Markdown; user messages are shown as typed. */}
               {m.role === 'assistant' ? <Markdown>{m.content}</Markdown> : m.content}
             </div>
-          ),
-        )}
+          )
+        })}
         {loading && <div className="bubble assistant typing">…</div>}
         <div ref={bottomRef} />
       </div>
       <form className="composer" onSubmit={handleSubmit}>
-        <textarea
-          value={draft}
-          onChange={(e) => onDraftChange(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Écris ton message…"
-          rows={2}
-          disabled={loading}
-          autoFocus
-        />
-        <button type="submit" disabled={loading || !draft.trim()}>
-          Envoyer
-        </button>
+        <div className="composer-options">
+          <label>
+            Modèle
+            <select value={model} onChange={(e) => onModelChange(e.target.value)} disabled={loading}>
+              {models.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="note-toggle">
+            <input
+              type="checkbox"
+              checked={asNote}
+              onChange={(e) => onAsNoteChange(e.target.checked)}
+              disabled={loading}
+            />
+            Note personnelle (non envoyée au LLM)
+          </label>
+        </div>
+        <div className="composer-row">
+          <textarea
+            value={draft}
+            onChange={(e) => onDraftChange(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder={asNote ? 'Écris ta note…' : 'Écris ton message…'}
+            rows={2}
+            disabled={loading}
+            autoFocus
+          />
+          <button type="submit" disabled={loading || !draft.trim() || !model}>
+            {asNote ? 'Noter' : 'Envoyer'}
+          </button>
+        </div>
       </form>
     </section>
   )

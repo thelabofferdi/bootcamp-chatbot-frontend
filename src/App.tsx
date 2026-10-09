@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react'
 import './App.css'
 import {
   createConversation,
+  createNote,
   getMessages,
+  getModels,
   listConversations,
-  sendMessage,
+  streamChat,
   type ConversationSummary,
 } from './api'
 import ChatWindow, { type ChatMessage } from './components/ChatWindow'
@@ -19,15 +21,24 @@ export default function App() {
   const [activeId, setActiveId] = useState<number | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [draft, setDraft] = useState('')
+  const [asNote, setAsNote] = useState(false)
+  const [models, setModels] = useState<string[]>([])
+  const [model, setModel] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // On startup, load the history and open the most recent conversation.
+  // On startup, load the history, the allowed models and open the most recent conversation.
   useEffect(() => {
     listConversations()
       .then((list) => {
         setConversations(list)
         if (list.length > 0) setActiveId(list[0].id)
+      })
+      .catch((err) => setError(errorMessage(err)))
+    getModels()
+      .then(({ models, default: defaultModel }) => {
+        setModels(models)
+        setModel(defaultModel)
       })
       .catch((err) => setError(errorMessage(err)))
   }, [])
@@ -71,31 +82,60 @@ export default function App() {
     }
   }
 
+  async function refreshPreviews() {
+    setConversations(await listConversations())
+  }
+
   async function handleSend() {
     if (activeId === null) return
     const text = draft.trim()
     const isFirstMessage = messages.length === 0
     setError(null)
     setDraft('')
-    setMessages((list) => [...list, { role: 'user', content: text }])
+    // An empty assistant bubble is added now and filled chunk by chunk as the answer streams in.
+    setMessages((list) => [...list, { role: 'user', content: text }, { role: 'assistant', content: '' }])
     setLoading(true)
     try {
-      const { reply, notification } = await sendMessage(activeId, text)
-      setMessages((list) => [
-        ...list,
-        { role: 'assistant', content: reply },
-        ...(notification ? [{ role: 'system-notification' as const, content: notification }] : []),
-      ])
+      const { notification } = await streamChat(activeId, text, model, (chunk) =>
+        setMessages((list) => {
+          const last = list[list.length - 1]
+          return [...list.slice(0, -1), { ...last, content: last.content + chunk }]
+        }),
+      )
+      if (notification) {
+        setMessages((list) => [...list, { role: 'system-notification', content: notification }])
+      }
       // The first message becomes the conversation's preview in the sidebar.
-      if (isFirstMessage) setConversations(await listConversations())
+      if (isFirstMessage) await refreshPreviews()
     } catch (err) {
-      // The backend didn't save the turn: drop the optimistic message and give the text back.
-      setMessages((list) => list.slice(0, -1))
+      // The backend saved nothing for this turn: remove the optimistic bubbles and give the text back.
+      setMessages((list) => list.slice(0, -2))
       setDraft(text)
       setError(errorMessage(err))
     } finally {
       setLoading(false)
     }
+  }
+
+  async function handleNote() {
+    if (activeId === null) return
+    const text = draft.trim()
+    const isFirstMessage = messages.length === 0
+    setError(null)
+    setDraft('')
+    try {
+      const note = await createNote(activeId, text)
+      setMessages((list) => [...list, { role: 'note', content: note.content }])
+      if (isFirstMessage) await refreshPreviews()
+    } catch (err) {
+      setDraft(text)
+      setError(errorMessage(err))
+    }
+  }
+
+  function handleSubmit() {
+    if (asNote) void handleNote()
+    else void handleSend()
   }
 
   return (
@@ -128,7 +168,12 @@ export default function App() {
             loading={loading}
             draft={draft}
             onDraftChange={setDraft}
-            onSend={handleSend}
+            onSubmit={handleSubmit}
+            asNote={asNote}
+            onAsNoteChange={setAsNote}
+            models={models}
+            model={model}
+            onModelChange={setModel}
           />
         )}
       </main>
